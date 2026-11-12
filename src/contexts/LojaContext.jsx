@@ -3,7 +3,7 @@ import { createContext, useContext, useEffect, useMemo, useState } from 'react'
 const STORAGE_KEY = 'balaio-mineiro-state-v1'
 
 const defaultConfig = {
-  nomeLoja: 'Minha loja',
+  nomeLoja: 'Empório Balaio Mineiro',
   diasAlerta: 7,
 }
 
@@ -16,6 +16,11 @@ const defaultState = {
 }
 
 const LojaContext = createContext(null)
+
+function normalizarConfig(config = {}) {
+  const nomeLoja = config.nomeLoja === 'Minha loja' ? defaultConfig.nomeLoja : config.nomeLoja
+  return { ...defaultConfig, ...config, nomeLoja: nomeLoja || defaultConfig.nomeLoja }
+}
 
 function makeId(prefix = 'id') {
   return `${prefix}_${Math.random().toString(36).slice(2, 10)}_${Date.now().toString(36)}`
@@ -30,7 +35,7 @@ function carregarEstado() {
     return {
       ...defaultState,
       ...parsed,
-      config: { ...defaultConfig, ...(parsed.config || {}) },
+      config: normalizarConfig(parsed.config),
       boletos: Array.isArray(parsed.boletos) ? parsed.boletos : [],
       despesas: Array.isArray(parsed.despesas) ? parsed.despesas : [],
       vendas: Array.isArray(parsed.vendas) ? parsed.vendas : [],
@@ -73,7 +78,7 @@ export function LojaProvider({ children }) {
       setEstado({
         ...defaultState,
         ...data,
-        config: { ...defaultConfig, ...(data.config || {}) },
+        config: normalizarConfig(data.config),
         boletos: Array.isArray(data.boletos) ? data.boletos : [],
         despesas: Array.isArray(data.despesas) ? data.despesas : [],
         vendas: Array.isArray(data.vendas) ? data.vendas : [],
