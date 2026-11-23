@@ -1,6 +1,6 @@
-import { createContext, useContext, useEffect, useMemo, useState } from 'react'
-
-const STORAGE_KEY = 'balaio-mineiro-state-v1'
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react'
+import { Box, Button, Center, Spinner, Text } from '@chakra-ui/react'
+import { carregarEstado as buscarNoServidor, salvarEstado as enviarAoServidor, sair } from '../utils/api'
 
 const defaultConfig = {
   nomeLoja: 'Empório Balaio Mineiro',
@@ -26,42 +26,102 @@ function makeId(prefix = 'id') {
   return `${prefix}_${Math.random().toString(36).slice(2, 10)}_${Date.now().toString(36)}`
 }
 
-function carregarEstado() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) return defaultState
-
-    const parsed = JSON.parse(raw)
-    return {
-      ...defaultState,
-      ...parsed,
-      config: normalizarConfig(parsed.config),
-      boletos: Array.isArray(parsed.boletos) ? parsed.boletos : [],
-      despesas: Array.isArray(parsed.despesas) ? parsed.despesas : [],
-      vendas: Array.isArray(parsed.vendas) ? parsed.vendas : [],
-      clientes: Array.isArray(parsed.clientes) ? parsed.clientes : [],
-    }
-  } catch {
-    return defaultState
-  }
-}
-
-function salvarEstado(estado) {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(estado))
-    return true
-  } catch {
-    return false
+// Garante que o que veio do servidor (ou de um backup) tenha o formato esperado
+function normalizarEstado(dados) {
+  const d = dados && typeof dados === 'object' ? dados : {}
+  return {
+    ...defaultState,
+    ...d,
+    config: normalizarConfig(d.config),
+    boletos: Array.isArray(d.boletos) ? d.boletos : [],
+    despesas: Array.isArray(d.despesas) ? d.despesas : [],
+    vendas: Array.isArray(d.vendas) ? d.vendas : [],
+    clientes: Array.isArray(d.clientes) ? d.clientes : [],
   }
 }
 
 export function LojaProvider({ children }) {
-  const [estado, setEstado] = useState(() => carregarEstado())
+  const [estado, setEstado] = useState(defaultState)
+  const [carregando, setCarregando] = useState(true)
+  const [erroCarga, setErroCarga] = useState('')
   const [erroSalvar, setErroSalvar] = useState(false)
+  const versaoRef = useRef(0) // versão que o servidor tem de nossos dados
+  const prontoRef = useRef(false) // só salva depois de carregar
+  const pendenteRef = useRef(false) // há alteração ainda não enviada
+  const ignorarRef = useRef(false) // mudança que veio do servidor não precisa voltar
 
+  const aplicarDoServidor = (resposta) => {
+    versaoRef.current = resposta.versao
+    ignorarRef.current = true
+    setEstado(normalizarEstado(resposta.dados))
+  }
+
+  // 1) ao abrir: busca os dados no banco
+  const carregar = async () => {
+    setErroCarga('')
+    setCarregando(true)
+    try {
+      aplicarDoServidor(await buscarNoServidor())
+      prontoRef.current = true
+    } catch (e) {
+      setErroCarga(e.message || 'Não foi possível carregar os dados.')
+    } finally {
+      setCarregando(false)
+    }
+  }
+  const iniciouRef = useRef(false)
   useEffect(() => {
-    setErroSalvar(!salvarEstado(estado))
+    if (iniciouRef.current) return
+    iniciouRef.current = true
+    carregar()
+  }, [])
+
+  // 2) a cada alteração: espera um instante e envia ao banco
+  useEffect(() => {
+    if (!prontoRef.current) return undefined
+    if (ignorarRef.current) {
+      ignorarRef.current = false
+      return undefined
+    }
+    pendenteRef.current = true
+    const espera = setTimeout(async () => {
+      try {
+        const r = await enviarAoServidor(estado, versaoRef.current)
+        versaoRef.current = r.versao
+        pendenteRef.current = false
+        setErroSalvar(false)
+      } catch (e) {
+        if (e.status === 409) {
+          // outro aparelho salvou antes: traz a versão dele
+          pendenteRef.current = false
+          try {
+            aplicarDoServidor(await buscarNoServidor())
+            window.alert('Os dados foram alterados em outro aparelho. A tela foi atualizada; refaça sua última alteração.')
+          } catch {
+            setErroSalvar(true)
+          }
+        } else {
+          setErroSalvar(true)
+        }
+      }
+    }, 700)
+    return () => clearTimeout(espera)
   }, [estado])
+
+  // 3) ao voltar para a aba/app: atualiza com o que foi feito em outro aparelho
+  useEffect(() => {
+    const aoVoltar = async () => {
+      if (document.visibilityState !== 'visible' || !prontoRef.current || pendenteRef.current) return
+      try {
+        const r = await buscarNoServidor()
+        if (r.versao !== versaoRef.current) aplicarDoServidor(r)
+      } catch {
+        /* sem internet: mantém o que está na tela */
+      }
+    }
+    document.addEventListener('visibilitychange', aoVoltar)
+    return () => document.removeEventListener('visibilitychange', aoVoltar)
+  }, [])
 
   const value = useMemo(() => ({
     ...estado,
@@ -74,16 +134,7 @@ export function LojaProvider({ children }) {
     },
     exportarBackup: () => JSON.stringify(estado, null, 2),
     importarBackup: (json) => {
-      const data = JSON.parse(json)
-      setEstado({
-        ...defaultState,
-        ...data,
-        config: normalizarConfig(data.config),
-        boletos: Array.isArray(data.boletos) ? data.boletos : [],
-        despesas: Array.isArray(data.despesas) ? data.despesas : [],
-        vendas: Array.isArray(data.vendas) ? data.vendas : [],
-        clientes: Array.isArray(data.clientes) ? data.clientes : [],
-      })
+      setEstado(normalizarEstado(JSON.parse(json)))
     },
     apagarTudo: () => setEstado({ ...defaultState }),
 
@@ -196,6 +247,25 @@ export function LojaProvider({ children }) {
       }))
     },
   }), [estado, erroSalvar])
+
+  if (carregando) {
+    return (
+      <Center minH="100vh" bg="creme.100">
+        <Spinner size="lg" color="vinho.500" />
+      </Center>
+    )
+  }
+  if (erroCarga) {
+    return (
+      <Center minH="100vh" bg="creme.100" px={4}>
+        <Box textAlign="center">
+          <Text mb={4}>{erroCarga}</Text>
+          <Button onClick={carregar} mr={2}>Tentar de novo</Button>
+          <Button variant="outline" onClick={sair}>Sair</Button>
+        </Box>
+      </Center>
+    )
+  }
 
   return <LojaContext.Provider value={value}>{children}</LojaContext.Provider>
 }

@@ -43,7 +43,9 @@ export function paraISO(data) {
 }
 
 export function hojeISO() {
-  return new Date().toISOString().slice(0, 10)
+  // data local (Brasília), sem passar por UTC: depois das 21h o toISOString já dá o dia seguinte
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
 export function mesAtualISO() {
