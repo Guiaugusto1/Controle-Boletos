@@ -27,6 +27,7 @@ import { Bloco, Cabecalho, CampoValor } from '../components/Comum'
 import ScanModal from '../components/ScanModal'
 import { lerCodigoBoleto, formatarLinhaDigitavel } from '../utils/boleto'
 import { importarBoletoPDF } from '../utils/pdfBoleto'
+import { ehPix, lerPix, pixCompleto } from '../utils/pix'
 import { apenasDigitos, formatarMoeda, formatarData, hojeISO, lerValor } from '../utils/formatters'
 
 export const CATEGORIAS_BOLETO = ['Mercadoria / fornecedor', 'Energia', 'Água', 'Aluguel', 'Internet e telefone', 'Impostos', 'Empréstimo', 'Outros']
@@ -61,6 +62,8 @@ function NovoBoleto() {
   const [leitura, setLeitura] = useState(null) // resultado da leitura automática
   const [lendoPDF, setLendoPDF] = useState(false)
   const [tentouSalvar, setTentouSalvar] = useState(false)
+  const dadosRef = useRef(dados)
+  dadosRef.current = dados
 
   useEffect(() => {
     if (id && !editando) navigate('/boletos', { replace: true })
@@ -118,18 +121,74 @@ function NovoBoleto() {
     [boletos, id]
   )
 
-  const lerCodigoDigitado = (texto = codigoDigitado) => {
-    if (!apenasDigitos(texto)) return
-    aplicarLeitura(lerCodigoBoleto(texto), 'digitado')
-  }
+  // QR Code Pix (do próprio boleto): traz valor, quem recebe e a chave; não traz vencimento
+  const aplicarPix = useCallback((r) => {
+    if (!r.ok) {
+      setLeitura({ erro: r.erro })
+      return
+    }
+    setDados((d) => ({
+      ...d,
+      valor: d.valor || (r.valor ? r.valor.toFixed(2).replace('.', ',') : ''),
+      fornecedor: d.fornecedor || r.nome,
+      cnpj: d.cnpj || r.cnpj,
+    }))
+    setCodigoDigitado('')
+    const avisos = []
+    if (!r.valor) avisos.push('Este QR Code não traz o valor (o banco guarda esse dado). Digite o valor ou leia o código de barras.')
+    if (!dadosRef.current.vencimento) avisos.push('O QR Code Pix não traz o vencimento. Leia o código de barras ou digite a data.')
+    setLeitura({
+      ok: true,
+      resumo: ['QR Pix', r.nome, r.valor ? formatarMoeda(r.valor) : ''].filter(Boolean).join(', '),
+      avisos,
+    })
+  }, [])
 
-  const aoLerCamera = useCallback(
-    (codigo) => {
-      aplicarLeitura(lerCodigoBoleto(codigo), 'camera')
-      toast({ title: 'Código lido pela câmera.', status: 'success' })
-    },
-    [aplicarLeitura, toast]
-  )
+  // Recebe qualquer texto lido (digitado, colado, câmera ou leitor USB) e decide o que é
+  const processarTexto = (texto, origem = 'digitado') => {
+    const t = String(texto || '').trim()
+    if (ehPix(t)) {
+      aplicarPix(lerPix(t))
+    } else if (apenasDigitos(t)) {
+      aplicarLeitura(lerCodigoBoleto(t), origem)
+    } else {
+      return
+    }
+    if (origem === 'camera') toast({ title: 'Código lido pela câmera.', status: 'success' })
+    if (origem === 'leitor') toast({ title: 'Código lido pelo leitor.', status: 'success' })
+  }
+  const processarRef = useRef(processarTexto)
+  processarRef.current = processarTexto
+
+  const lerCodigoDigitado = (texto = codigoDigitado) => processarTexto(texto, 'digitado')
+
+  const aoLerCamera = useCallback((codigo) => processarRef.current(codigo, 'camera'), [])
+
+  // Leitor USB / Bluetooth: ele "digita" o código bem rápido e aperta Enter.
+  // Funciona em qualquer lugar da tela (basta não estar com outro campo selecionado).
+  useEffect(() => {
+    let buffer = ''
+    let ultimo = 0
+    const aoTecla = (e) => {
+      const alvo = e.target
+      const emCampo = alvo && (['INPUT', 'TEXTAREA', 'SELECT'].includes(alvo.tagName) || alvo.isContentEditable)
+      if (emCampo) return
+      const agora = Date.now()
+      if (agora - ultimo > 80) buffer = ''
+      ultimo = agora
+      if (e.key === 'Enter') {
+        if (buffer.length >= 40) {
+          e.preventDefault()
+          processarRef.current(buffer, 'leitor')
+        }
+        buffer = ''
+        return
+      }
+      if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) buffer += e.key
+    }
+    window.addEventListener('keydown', aoTecla)
+    return () => window.removeEventListener('keydown', aoTecla)
+  }, [])
 
   const aoEscolherPDF = async (e) => {
     const arquivo = e.target.files?.[0]
@@ -189,24 +248,28 @@ function NovoBoleto() {
           Preencher pelo código do boleto
         </Heading>
         <Text fontSize="sm" color="marrom.400" mb={3}>
-          Digite ou cole a linha digitável. O banco, o valor e o vencimento são preenchidos sozinhos. Leitor de código de barras USB também funciona neste campo.
+          Digite ou cole a linha digitável (ou o Pix copia e cola). O banco, o valor e o vencimento são preenchidos sozinhos. Leitor de código de barras USB também funciona: basta apontar para o boleto, sem clicar em nada.
         </Text>
         <Flex gap={2} direction={{ base: 'column', sm: 'row' }}>
           <Input
             value={codigoDigitado}
             onChange={(e) => {
               setCodigoDigitado(e.target.value)
-              const n = apenasDigitos(e.target.value).length
-              if (n === 44 || n === 47 || n === 48) lerCodigoDigitado(e.target.value)
+              const v = e.target.value
+              if (ehPix(v)) {
+                if (pixCompleto(v)) lerCodigoDigitado(v)
+                return
+              }
+              const n = apenasDigitos(v).length
+              if (n === 44 || n === 47 || n === 48) lerCodigoDigitado(v)
             }}
             onKeyDown={(e) => e.key === 'Enter' && lerCodigoDigitado()}
             onPaste={(e) => {
               const t = e.clipboardData.getData('text')
               setTimeout(() => lerCodigoDigitado(t), 0)
             }}
-            placeholder="00000.00000 00000.000000 00000.000000 0 00000000000000"
-            inputMode="numeric"
-            aria-label="Linha digitável ou código de barras"
+            placeholder="Linha digitável (47 números) ou Pix copia e cola"
+                        aria-label="Linha digitável ou código de barras"
             fontSize="sm"
           />
           <Button variant="outline" onClick={() => lerCodigoDigitado()} flexShrink={0}>
