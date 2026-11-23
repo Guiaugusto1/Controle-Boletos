@@ -3,6 +3,7 @@ import {
   Flex,
   VStack,
   Text,
+  Button,
   Icon,
   IconButton,
   Image,
@@ -18,6 +19,7 @@ import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { useEffect } from 'react'
 import { FiHome, FiFileText, FiShoppingBag, FiTrendingUp, FiBookOpen, FiBarChart2, FiSettings, FiMenu } from 'react-icons/fi'
 import { useLoja } from '../contexts/LojaContext'
+import { sair } from '../utils/api'
 
 const menu = [
   { label: 'Início', path: '/', icon: FiHome },
@@ -86,9 +88,14 @@ function Menu({ aoNavegar }) {
           </Flex>
         ))}
       </VStack>
-      <Text px={6} py={5} fontSize="xs" color="marrom.200">
-        Dados salvos neste navegador. Faça backup em Configurações.
-      </Text>
+      <Box px={6} py={5}>
+        <Text fontSize="xs" color="marrom.200" mb={3}>
+          Dados salvos na nuvem. Entre com seu e-mail e senha em qualquer aparelho.
+        </Text>
+        <Button size="sm" variant="outline" colorScheme="whiteAlpha" color="creme.200" onClick={sair}>
+          Sair
+        </Button>
+      </Box>
     </Flex>
   )
 }
@@ -149,7 +156,7 @@ function Layout() {
           {erroSalvar && (
             <Alert status="error" mb={4} borderRadius="lg">
               <AlertIcon />
-              Não foi possível salvar os dados no navegador. Faça um backup agora em Configurações.
+              Não foi possível salvar na nuvem. Verifique a internet; as últimas alterações podem não ter sido gravadas.
             </Alert>
           )}
           <Outlet />
