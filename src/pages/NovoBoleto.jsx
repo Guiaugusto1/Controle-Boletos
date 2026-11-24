@@ -19,7 +19,7 @@ import {
   useDisclosure,
   useToast,
 } from '@chakra-ui/react'
-import { FiCamera, FiFileText } from 'react-icons/fi'
+import { FiCamera, FiFileText, FiImage } from 'react-icons/fi'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useLoja } from '../contexts/LojaContext'
@@ -28,6 +28,7 @@ import ScanModal from '../components/ScanModal'
 import { lerCodigoBoleto, formatarLinhaDigitavel } from '../utils/boleto'
 import { importarBoletoPDF } from '../utils/pdfBoleto'
 import { ehPix, lerPix, pixCompleto } from '../utils/pix'
+import { lerCodigoDeImagem } from '../utils/lerImagem'
 import { apenasDigitos, formatarMoeda, formatarData, hojeISO, lerValor } from '../utils/formatters'
 
 export const CATEGORIAS_BOLETO = ['Mercadoria / fornecedor', 'Energia', 'Água', 'Aluguel', 'Internet e telefone', 'Impostos', 'Empréstimo', 'Outros']
@@ -53,6 +54,7 @@ function NovoBoleto() {
   const toast = useToast()
   const scanner = useDisclosure()
   const inputPDF = useRef(null)
+  const inputFoto = useRef(null)
 
   const editando = id ? boletos.find((b) => b.id === id) : null
   const [dados, setDados] = useState(() =>
@@ -61,6 +63,7 @@ function NovoBoleto() {
   const [codigoDigitado, setCodigoDigitado] = useState(editando?.codigo ? formatarLinhaDigitavel(editando.codigo) : '')
   const [leitura, setLeitura] = useState(null) // resultado da leitura automática
   const [lendoPDF, setLendoPDF] = useState(false)
+  const [lendoFoto, setLendoFoto] = useState(false)
   const [tentouSalvar, setTentouSalvar] = useState(false)
   const dadosRef = useRef(dados)
   dadosRef.current = dados
@@ -156,6 +159,7 @@ function NovoBoleto() {
     }
     if (origem === 'camera') toast({ title: 'Código lido pela câmera.', status: 'success' })
     if (origem === 'leitor') toast({ title: 'Código lido pelo leitor.', status: 'success' })
+    if (origem === 'foto') toast({ title: 'Código lido pela foto.', status: 'success' })
   }
   const processarRef = useRef(processarTexto)
   processarRef.current = processarTexto
@@ -189,6 +193,33 @@ function NovoBoleto() {
     window.addEventListener('keydown', aoTecla)
     return () => window.removeEventListener('keydown', aoTecla)
   }, [])
+
+  // Foto tirada na hora (abre a câmera do celular) ou imagem da galeria
+  const aoEscolherFoto = async (e) => {
+    const arquivo = e.target.files?.[0]
+    e.target.value = ''
+    if (!arquivo) return
+    setLendoFoto(true)
+    setLeitura(null)
+    try {
+      const r = await lerCodigoDeImagem(arquivo)
+      if (r.texto) {
+        processarRef.current(r.texto, 'foto')
+      } else if (r.outro) {
+        setLeitura({ erro: `Li um código de barras (${r.outro.slice(0, 30)}), mas ele não é de boleto. O código do boleto tem 44 números e começa com o código do banco.` })
+      } else {
+        const pequena = Math.max(r.largura, r.altura) < 900
+        setLeitura({
+          erro: `Não achei o código de barras nem o QR Code nesta imagem.${pequena ? ` A imagem é pequena (${r.largura}x${r.altura}): o código de barras do boleto precisa de pelo menos uns 700 pixels de largura para ser lido.` : ''} Tire a foto de perto, só da parte das barras, com boa luz e sem reflexo, ou cole a linha digitável.`,
+        })
+      }
+    } catch (err) {
+      console.error(err)
+      setLeitura({ erro: 'Não foi possível ler esta imagem.' })
+    } finally {
+      setLendoFoto(false)
+    }
+  }
 
   const aoEscolherPDF = async (e) => {
     const arquivo = e.target.files?.[0]
@@ -284,6 +315,10 @@ function NovoBoleto() {
           <Button size="sm" variant="ghost" leftIcon={<FiCamera />} onClick={scanner.onOpen}>
             Ler com a câmera
           </Button>
+          <Button size="sm" variant="ghost" leftIcon={<FiImage />} onClick={() => inputFoto.current?.click()} isLoading={lendoFoto} loadingText="Lendo foto">
+            Foto ou imagem do boleto
+          </Button>
+          <input ref={inputFoto} type="file" accept="image/*" hidden onChange={aoEscolherFoto} />
         </Flex>
 
         {leitura?.erro && (

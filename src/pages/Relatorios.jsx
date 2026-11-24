@@ -1,7 +1,7 @@
-import { Box, Button, Flex, Grid, Heading, Input, Stack, Text, Tooltip, useToast } from '@chakra-ui/react'
-import { FiDownload, FiPrinter } from 'react-icons/fi'
+import { Box, Button, Flex, Grid, Heading, Input, Menu, MenuButton, MenuItem, MenuList, Stack, Text, Tooltip, useToast } from '@chakra-ui/react'
+import { FiChevronDown, FiDownload, FiPrinter } from 'react-icons/fi'
 import { useMemo, useState } from 'react'
-import { useLoja, saldoCliente } from '../contexts/LojaContext'
+import { useLoja, saldoCliente, statusBoleto } from '../contexts/LojaContext'
 import { Bloco, Cabecalho } from '../components/Comum'
 import { formatarMes, formatarMoeda, mesAtualISO, paraData, paraISO, somar } from '../utils/formatters'
 import { exportarExcel, exportarRelatorioPDF } from '../utils/exportar'
@@ -43,6 +43,7 @@ function Relatorios() {
     return {
       vendas: vendasMes,
       despesas: despesasMes,
+      despesasLista: despesasMesLista,
       boletosPagos: somar(pagos),
       resultado: vendasMes - despesasMes - somar(pagos),
       fiadoReceber: somar(clientes.map((c) => ({ valor: Math.max(0, saldoCliente(c)) }))),
@@ -70,24 +71,35 @@ function Relatorios() {
         nomeLoja: config.nomeLoja,
         resumo: calc,
         despesasPorCategoria: calc.porCategoria,
+        despesasLista: calc.despesasLista,
         boletosPagos: calc.pagos,
         boletosAbertos: calc.abertos,
       })
     } catch (e) {
       console.error(e)
-      toast({ title: 'Não foi possível gerar o PDF.', status: 'error' })
+      toast({ title: 'Não foi possível gerar o PDF.', description: e?.message, status: 'error', duration: 8000 })
     } finally {
       setGerando('')
     }
   }
 
-  const gerarExcel = async () => {
+  const gerarExcel = async (tipo) => {
     setGerando('excel')
     try {
-      await exportarExcel({ boletos, despesas, vendas, clientes, saldoCliente })
+      await exportarExcel({
+        boletos,
+        despesas,
+        vendas,
+        clientes,
+        saldoCliente,
+        statusBoleto,
+        diasAlerta: config.diasAlerta,
+        nomeLoja: config.nomeLoja,
+        periodo: { tipo, mes },
+      })
     } catch (e) {
       console.error(e)
-      toast({ title: 'Não foi possível gerar a planilha.', status: 'error' })
+      toast({ title: 'Não foi possível gerar a planilha.', description: e?.message, status: 'error', duration: 8000 })
     } finally {
       setGerando('')
     }
@@ -95,13 +107,20 @@ function Relatorios() {
 
   return (
     <Box>
-      <Cabecalho titulo="Relatórios" descricao="Quanto entrou, quanto saiu e o que sobrou em cada mês.">
+      <Cabecalho titulo="Relatórios" descricao="Quanto entrou, quanto saiu e o que sobrou. A planilha Excel traz boletos, despesas, vendas e fiado do mês, do ano ou de tudo.">
         <Button leftIcon={<FiPrinter />} onClick={gerarPDF} isLoading={gerando === 'pdf'} loadingText="Gerando">
           Baixar PDF do mês
         </Button>
-        <Button leftIcon={<FiDownload />} variant="outline" onClick={gerarExcel} isLoading={gerando === 'excel'} loadingText="Gerando">
-          Planilha Excel
-        </Button>
+        <Menu>
+          <MenuButton as={Button} leftIcon={<FiDownload />} rightIcon={<FiChevronDown />} variant="outline" isLoading={gerando === 'excel'} loadingText="Gerando">
+            Planilha Excel
+          </MenuButton>
+          <MenuList>
+            <MenuItem onClick={() => gerarExcel('mes')}>Só {formatarMes(mes)}</MenuItem>
+            <MenuItem onClick={() => gerarExcel('ano')}>Ano de {mes.slice(0, 4)} inteiro</MenuItem>
+            <MenuItem onClick={() => gerarExcel('tudo')}>Tudo (todos os meses)</MenuItem>
+          </MenuList>
+        </Menu>
       </Cabecalho>
 
       <Flex align="center" gap={3} mb={6}>
